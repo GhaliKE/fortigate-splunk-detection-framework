@@ -1,5 +1,32 @@
 # FortiGate / Splunk Detection and Risk Prioritization Framework
 
+## Table of contents
+
+- [Project overview](#project-overview)
+- [Problem statement](#problem-statement)
+- [Architecture](#architecture)
+- [Technologies](#technologies)
+- [Key features](#key-features)
+- [Dashboard overview](#dashboard-overview)
+- [Firewall action normalization](#firewall-action-normalization)
+- [Explainable risk scoring](#explainable-risk-scoring)
+- [Noise-reduction methodology](#noise-reduction-methodology)
+- [Behavioral baseline](#behavioral-baseline)
+- [Splunk AI Toolkit](#splunk-ai-toolkit)
+- [Data-quality assessment](#data-quality-assessment)
+- [Synthetic validation](#synthetic-validation)
+- [Reference results](#reference-results)
+- [Repository structure](#repository-structure)
+- [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
+- [Installation and reuse](#installation-and-reuse)
+- [Security and privacy](#security-and-privacy)
+- [Limitations](#limitations)
+- [Future improvements](#future-improvements)
+- [Author](#author)
+- [License](#license)
+- [Disclaimer](#disclaimer)
+
 ## Project overview
 
 This project is an explainable monitoring and risk-prioritization framework
@@ -35,10 +62,19 @@ Supporting components cover data quality, behavioral baselines, Splunk AI
 Toolkit, security-framework mapping, and Detection Pack documentation. See
 [`documentation/architecture.md`](documentation/architecture.md).
 
+## Technologies
+
+- Splunk Enterprise or Splunk Cloud
+- Splunk SPL
+- Splunk AI Toolkit / MLTK
+- FortiGate traffic logs
+- Classic XML dashboards
+- MITRE ATT&CK, NIST CSF, and CIS Controls references
+
 ## Key features
 
 - Global FortiGate traffic monitoring
-- Sensitive access monitoring for SSH, RDP, SMB, and SSL/VPN
+- Sensitive access monitoring for SSH, RDP, SMB, and potential SSL/VPN traffic
 - SSH threat hunting
 - Firewall action normalization
 - Explainable risk scoring normalized to 100
@@ -53,9 +89,11 @@ Toolkit, security-framework mapping, and Detection Pack documentation. See
 
 Import the XML files in [`dashboards/`](dashboards/) as Classic XML
 dashboards. The global dashboard summarizes volume and actions; the sensitive
-access dashboard prioritizes remote-service activity; and the SSH dashboard
-supports deeper threat hunting. No screenshot is included until it has been
-independently anonymized; the expected image set is documented in
+access dashboard prioritizes remote-service activity, including potential
+SSL/VPN traffic; and the SSH dashboard supports deeper threat hunting. An
+`SSL` service value alone does not confirm that a VPN tunnel was established.
+No screenshot is included until it has been independently anonymized; the
+expected image set is documented in
 [`images/README.md`](images/README.md).
 
 ## Firewall action normalization
@@ -95,7 +133,7 @@ that a source is malicious.
 The profiles are configurable filters applied before investigation:
 
 | Profile | Decisions | Blocks | Blocking ratio | Calibration result |
-|---|---:|---:|---:|---:|
+|---|---:|---:|---:|---|
 | Wide | 20 | 10 | 70% | 119 retained |
 | Balanced | 50 | 25 | 80% | 74 retained |
 | Strict | 100 | 50 | 90% | 46 retained |
@@ -113,12 +151,12 @@ behavioral anomalies exceeded the selected threshold during the tested period.
 
 ## Splunk AI Toolkit
 
-`DensityFunction` is applied to the `score_risque` feature. The model is
-trained (`fit`) over seven days at one-hour granularity and stores 447,108
-aggregated observations. `apply` evaluates new observations over a four-hour
-window. Zero statistical outliers were identified during the application
-period. This means recent scores remained consistent with the learned
-distribution; it does not mean that risk was absent.
+`DensityFunction` is applied to the `score_risque` feature. The training
+search generated 447,108 aggregated observations over seven days at one-hour
+granularity. The trained model is then used by `apply` to evaluate new
+observations over a four-hour window. Zero statistical outliers were identified
+during the application period. This means recent scores remained consistent
+with the learned distribution; it does not mean that risk was absent.
 
 ## Data-quality assessment
 
@@ -143,20 +181,30 @@ the engine logic; it does not measure performance on real incidents.
 
 ## Reference results
 
-The reference live measurement analyzed 6,979 network sources during four
-hours. 81 sources matched the balanced prioritization criteria, while 6,898
-were removed from the priority investigation list: a 98.84% reduction in
-investigation volume. The field-completeness assessment included 12,474,308
-events. The AI Toolkit used a seven-day training period, one-hour aggregation,
-and 447,108 aggregated training observations. Zero behavioral anomalies and
-zero statistical outliers were observed; drift was stable.
+The reference live measurement produced the following results:
 
-**The 98.84% value represents a reduction in investigation volume. It is not a
-detection rate, an accuracy score, a precision measurement, a recall
-measurement, or a false-positive rate.**
+- 6,979 network sources analyzed during four hours
+- 81 sources matched the balanced prioritization criteria
+- 6,898 sources removed from the priority investigation list
+- 98.84% reduction in investigation volume
+- 12,474,308 events included in the field-completeness assessment
+- Seven-day AI Toolkit training period
+- One-hour aggregation granularity
+- 447,108 aggregated training observations generated by the training search
+- Zero behavioral anomalies observed
+- Zero statistical outliers observed
+- Observed drift status: stable
 
-A prioritized source is not automatically confirmed as malicious. Human
-investigation and additional context remain necessary. See
+> [!IMPORTANT]
+> The 98.84% value represents a reduction in investigation volume. It is not a
+> detection rate, an accuracy score, a precision measurement, a recall
+> measurement, or a false-positive rate.
+
+> [!NOTE]
+> A prioritized source is not automatically confirmed as malicious. Human
+> investigation and additional context remain necessary.
+
+See
 [`results/reference_results.md`](results/reference_results.md).
 
 ## Repository structure
@@ -170,6 +218,29 @@ results/          Reference measurements
 examples/         Fully synthetic validation data
 images/           Anonymized publication-image requirements
 ```
+
+## Prerequisites
+
+- Access to Splunk Enterprise or Splunk Cloud.
+- Permission to run searches and import or create Classic XML dashboards.
+- FortiGate traffic events with `srcip`, `dstip`, `dstport`, `service`, and
+  `action` fields, plus `sentbyte` and `rcvdbyte` where available.
+- A target index and sourcetype approved by the Splunk administrator.
+- Splunk AI Toolkit / MLTK permissions for `fit`, `apply`, `listmodels`, and
+  `summary` if statistical analysis is enabled.
+- A controlled test window and an analyst-approved threshold-calibration
+  process.
+
+## Quick start
+
+1. Review the privacy requirements in [`SECURITY.md`](SECURITY.md).
+2. Inspect the expected fields and adapt the example index and sourcetype in
+   the searches.
+3. Test the searches over a limited, non-production time range.
+4. Import the dashboards as private Classic XML dashboards.
+5. Validate action values and field completeness in the target environment.
+6. Train the AI Toolkit model separately, then use `apply` for new data.
+7. Review prioritized sources with contextual analyst validation.
 
 ## Installation and reuse
 
@@ -199,14 +270,24 @@ blocking or incident creation and cannot replace contextual human review. See
 
 ## Future improvements
 
-Potential extensions include labeled validation data, multivariate baselines,
-calibration by environment, richer asset context, and controlled feedback
-from analyst outcomes.
+Potential extensions include:
+
+- Collecting labeled validation data to measure accuracy-related metrics
+  responsibly.
+- Adding multivariate baselines that combine volume, destinations, ports, and
+  service context.
+- Calibrating thresholds by environment, asset role, and analyst capacity.
+- Enriching sources with approved asset ownership and business context.
+- Adding controlled analyst feedback and outcome tracking.
+- Adding CI checks for Markdown links, XML validity, and SPL structure.
+- Publishing independently anonymized architecture and dashboard images.
 
 ## Author
 
-This repository is a public technical portfolio and reusable Detection Pack.
-Add maintainer attribution here when publishing the repository.
+**Ghali Elkiraa**
+
+- GitHub: [@GhaliKE](https://github.com/GhaliKE)
+- LinkedIn: [Ghali El Kiraa](https://www.linkedin.com/in/ghali-el-kiraa-746258363/)
 
 ## License
 
