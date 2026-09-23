@@ -1,0 +1,101 @@
+######################################################################
+# MESURE DE REDUCTION DU BRUIT
+# Resultat de reference observe : 98,84 % sur 4 heures.
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| eval statut_action=case(action="allowed","autorise",action="block" OR action="blocked","non_autorise",action="teardown","fin_session",1=1,"autre")
+| stats count(eval(statut_action="autorise")) as autorisees count(eval(statut_action="non_autorise")) as non_autorisees by srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>0
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| eventstats count as sources_initiales
+| eval retenue=if(decisions>=50 AND non_autorisees>=25 AND ratio_non_autorise>=80,1,0)
+| stats max(sources_initiales) as sources_initiales sum(retenue) as sources_retenues
+| eval sources_eliminees=sources_initiales-sources_retenues
+| eval taux_reduction_bruit=round((sources_eliminees/sources_initiales)*100,2)
+| eval taux_sources_conservees=round((sources_retenues/sources_initiales)*100,2)
+| table sources_initiales sources_retenues sources_eliminees taux_reduction_bruit taux_sources_conservees
+
+
+
+
+######################################################################
+# SIMULATEUR DE SEUILS
+# Objectif : comparer trois profils de filtrage
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)
+| stats count(eval(statut_action="autorise")) as autorisees
+        count(eval(statut_action="non_autorise")) as non_autorisees
+        dc(dstip) as destinations
+        dc(dstport_str) as ports
+        by srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>0
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| eventstats count as sources_initiales
+| eval profil="Large,Equilibre,Strict"
+| makemv delim="," profil
+| mvexpand profil
+| eval retenue=case(
+    profil="Large" AND decisions>=20 AND non_autorisees>=10 AND ratio_non_autorise>=70,1,
+    profil="Equilibre" AND decisions>=50 AND non_autorisees>=25 AND ratio_non_autorise>=80,1,
+    profil="Strict" AND decisions>=100 AND non_autorisees>=50 AND ratio_non_autorise>=90,1,
+    1=1,0
+)
+| stats max(sources_initiales) as sources_initiales
+        sum(retenue) as sources_retenues
+        by profil
+| eval sources_eliminees=sources_initiales-sources_retenues
+| eval taux_reduction_bruit=round((sources_eliminees/sources_initiales)*100,2)
+| eval taux_sources_conservees=round((sources_retenues/sources_initiales)*100,2)
+| eval ordre=case(
+    profil="Large",1,
+    profil="Equilibre",2,
+    profil="Strict",3
+)
+| sort ordre
+| table profil sources_initiales sources_retenues sources_eliminees taux_reduction_bruit taux_sources_conservees
+
+
+
+
+######################################################################
+# CONTROLE DE QUALITE DES DONNEES FORTIGATE
+# Objectif : mesurer la completude des champs indispensables
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| stats count as total_evenements
+        count(eval(isnull(srcip) OR srcip="")) as srcip_manquantes
+        count(eval(isnull(dstip) OR dstip="")) as dstip_manquantes
+        count(eval(isnull(dstport) OR dstport="")) as dstport_manquants
+        count(eval(isnull(service) OR service="")) as service_manquant
+        count(eval(isnull(action) OR action="")) as action_manquante
+| eval completude_srcip=round((1-srcip_manquantes/total_evenements)*100,2)
+| eval completude_dstip=round((1-dstip_manquantes/total_evenements)*100,2)
+| eval completude_dstport=round((1-dstport_manquants/total_evenements)*100,2)
+| eval completude_service=round((1-service_manquant/total_evenements)*100,2)
+| eval completude_action=round((1-action_manquante/total_evenements)*100,2)
+| table total_evenements c*mpletude_srcip completude_dstip co*pletude_dstport completude_service*completude_action

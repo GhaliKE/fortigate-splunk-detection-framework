@@ -1,0 +1,115 @@
+######################################################################
+# FortiGate Detection Pack - Requetes SPL finales
+# Classification normalisee des actions :
+#   allowed        = autorise
+#   block/blocked  = non_autorise
+#   teardown       = fin_session (exclue des ratios de blocage)
+# Rafraichissement recommande : manuel
+######################################################################
+
+######################################################################
+# DASHBOARD 3 - THREAT HUNTING SSH
+######################################################################
+
+# PANEL 1 - Vue globale SSH
+# Fenetre : 4h | Visualisation : Statistics
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval total_bytes=coalesce(tonumber(sentbyte),0)+coalesce(tonumber(rcvdbyte),0)
+| stats count as evenements_ssh dc(srcip) as sources_uniques dc(dstip) as destinations_uniques sum(total_bytes) as volume_octets
+| eval volume_Go=round(volume_octets/1024/1024/1024,2)
+| table evenements_ssh sources_uniques destinations_uniques volume_Go
+
+
+# PANEL 2 - Evolution du trafic SSH
+# Fenetre : 24h | Visualisation : Line Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| timechart span=1h count as evenements_ssh
+
+
+# PANEL 3 - SSH par action firewall dans le temps
+# Fenetre : 24h | Visualisation : Area/Line Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval action_ssh=case(action="allowed","Autorise",action="block" OR action="blocked","Bloque",action="teardown","Fin de session",1=1,"Autre")
+| timechart span=1h count by action_ssh
+
+
+# PANEL 4 - Sources SSH prioritaires
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval statut_action=case(action="allowed","autorise",action="block" OR action="blocked","non_autorise",action="teardown","fin_session",1=1,"autre")
+| stats count(eval(statut_action="autorise")) as autorisees count(eval(statut_action="non_autorise")) as ssh_bloquees dc(dstip) as destinations_ssh by srcip
+| eval decisions=autorisees+ssh_bloquees
+| where decisions>=20 AND ssh_bloquees>=10
+| eval ratio_non_autorise=round((ssh_bloquees/decisions)*100,2)
+| where ratio_non_autorise>=80
+| eval score_priorite=round((ratio_non_autorise*0.5)+(min(ssh_bloquees,100)*0.3)+(min(destinations_ssh,20)*1),2)
+| sort - score_priorite
+| head 10
+| table srcip score_priorite
+
+
+# PANEL 5 - Connexions SSH bloquees
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| where action="block" OR action="blocked"
+| stats count as connexions_ssh_bloquees dc(dstip) as destinations_ssh by srcip
+| where connexions_ssh_bloquees>=10
+| sort - connexions_ssh_bloquees
+| head 10
+| table srcip connexions_ssh_bloquees
+
+
+# PANEL 6 - Destinations SSH les plus ciblees
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| where action="block" OR action="blocked"
+| stats count as tentatives_bloquees dc(srcip) as sources_uniques by dstip
+| where tentatives_bloquees>=10
+| sort - tentatives_bloquees
+| head 10
+| table dstip tentatives_bloquees
+
+
+# PANEL 7 - Sources SSH bloquees actives hors horaires
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| where action="block" OR action="blocked"
+| eval heure=tonumber(strftime(_time,"%H"))
+| where heure<8 OR heure>18
+| stats count as connexions_hors_horaires dc(dstip) as destinations_ssh by srcip
+| where connexions_hors_horaires>=10
+| sort - connexions_hors_horaires
+| head 10
+| table srcip connexions_hors_horaires
+
+
+# PANEL 8 - Score de risque SSH sur 100
+# Fenetre : 4h | Visualisation : Table | Top 20
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval heure=tonumber(strftime(_time,"%H"))
+| eval hors_horaires_flag=if(heure<8 OR heure>18,1,0)
+| eval statut_action=case(action="allowed","autorise",action="block" OR action="blocked","non_autorise",action="teardown","fin_session",1=1,"autre")
+| stats count(eval(statut_action="autorise")) as autorisees count(eval(statut_action="non_autorise")) as ssh_bloquees sum(hors_horaires_flag) as hors_horaires dc(dstip) as destinations_ssh by srcip
+| eval decisions=autorisees+ssh_bloquees
+| where decisions>=20 AND ssh_bloquees>=10
+| eval ratio_non_autorise=round((ssh_bloquees/decisions)*100,2)
+| where ratio_non_autorise>=80
+| eval score_volume=case(decisions<50,5,decisions<200,10,decisions<1000,15,1=1,20)
+| eval score_blocage=case(ssh_bloquees<25,5,ssh_bloquees<50,10,ssh_bloquees<100,15,1=1,20)
+| eval score_ratio=case(ratio_non_autorise<85,10,ratio_non_autorise<95,20,1=1,30)
+| eval score_destinations=case(destinations_ssh<3,5,destinations_ssh<10,10,destinations_ssh<30,15,1=1,20)
+| eval score_horaires=case(hors_horaires=0,0,hors_horaires<10,3,hors_horaires<50,7,1=1,10)
+| eval score_risque_ssh=score_volume+score_blocage+score_ratio+score_destinations+score_horaires
+| eval score_risque_ssh=if(score_risque_ssh>100,100,score_risque_ssh)
+| eval niveau_risque=case(score_risque_ssh<30,"Faible",score_risque_ssh<60,"Moyen",score_risque_ssh<80,"Eleve",1=1,"Critique")
+| sort - score_risque_ssh
+| head 20
+| table srcip niveau_risque score_risque_ssh ratio_non_autorise decisions ssh_bloquees destinations_ssh hors_horaires

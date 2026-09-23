@@ -1,0 +1,91 @@
+######################################################################
+# FortiGate Detection Pack - Requetes SPL finales
+# Classification normalisee des actions :
+#   allowed        = autorise
+#   block/blocked  = non_autorise
+#   teardown       = fin_session (exclue des ratios de blocage)
+# Rafraichissement recommande : manuel
+######################################################################
+
+######################################################################
+# DASHBOARD 1 - SUPERVISION AVANCEE FORTIGATE
+######################################################################
+
+# PANEL 1 - Vue globale enrichie du trafic
+# Fenetre : 4h | Visualisation : Statistics
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval sentbyte_num=coalesce(tonumber(sentbyte),0)
+| eval rcvdbyte_num=coalesce(tonumber(rcvdbyte),0)
+| eval total_bytes=sentbyte_num+rcvdbyte_num
+| stats count as evenements dc(srcip) as sources_uniques dc(dstip) as destinations_uniques dc(dstport) as ports_uniques sum(total_bytes) as volume_total_octets
+| eval volume_total_Go=round(volume_total_octets/1024/1024/1024,2)
+| table evenements sources_uniques destinations_uniques ports_uniques volume_total_Go
+
+
+# PANEL 2 - Evolution du trafic dans le temps
+# Fenetre : 24h | Visualisation : Line Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| timechart span=1h count as evenements
+
+
+# PANEL 3 - Evolution du volume reseau en Go
+# Fenetre : 24h | Visualisation : Area Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| eval sentbyte_num=coalesce(tonumber(sentbyte),0)
+| eval rcvdbyte_num=coalesce(tonumber(rcvdbyte),0)
+| eval total_bytes=sentbyte_num+rcvdbyte_num
+| timechart span=1h sum(total_bytes) as volume_octets
+| eval volume_Go=round(volume_octets/1024/1024/1024,2)
+| fields _time volume_Go
+
+
+# PANEL 4 - Sources a comportement reseau intense
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+# Score d'intensite, pas score de risque.
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| stats count as connexions dc(dstip) as destinations_uniques dc(dstport) as ports_uniques by srcip
+| eval score_activite=round(log(connexions+1)*20+destinations_uniques*5+ports_uniques*10,2)
+| sort - score_activite
+| head 10
+| table srcip score_activite
+
+
+# PANEL 5 - Repartition des actions du pare-feu
+# Fenetre : 4h | Visualisation : Bar Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval signification=case(action="allowed","Trafic autorise",action="block" OR action="blocked","Trafic bloque",action="teardown","Fin de session",1=1,"Autre")
+| stats count as evenements by signification
+| sort - evenements
+
+
+# PANEL 6 - Sources contactant de nombreuses destinations
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where isnotnull(srcip) AND isnotnull(dstip)
+| stats count as connexions dc(dstip) as destinations_uniques by srcip
+| where connexions>=10
+| sort - destinations_uniques
+| head 10
+| table srcip destinations_uniques
+
+
+# PANEL 7 - Sources contactant de nombreux ports
+# Fenetre : 4h | Visualisation : Bar Chart | Top 10
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where isnotnull(srcip) AND isnotnull(dstport)
+| stats count as connexions dc(dstport) as ports_uniques by srcip
+| where connexions>=10
+| sort - ports_uniques
+| head 10
+| table srcip ports_uniques
+
+
+# PANEL 8 - Ports rares ou inhabituels
+# Fenetre : 4h | Visualisation : Table | Top 15
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where isnotnull(dstport)
+| stats count as connexions dc(srcip) as sources_uniques dc(dstip) as destinations_uniques values(service) as services by dstport
+| where connexions>=2 AND connexions<=50
+| sort connexions
+| head 15
+| table dstport connexions sources_uniques destinations_uniques services

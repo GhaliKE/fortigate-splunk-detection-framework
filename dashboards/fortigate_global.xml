@@ -1,0 +1,198 @@
+<dashboard version="1.1" theme="dark">
+  <label>Tableau de Bord Avancé de Supervision Fortigate</label>
+  <description>Ce tableau de bord fournit une analyse avancée des logs Fortigate live afin d’identifier les comportements réseau inhabituels, les volumes de trafic anormaux, les connexions refusées, les ports rares, les sources à forte activité et les patterns pouvant indiquer une activité suspecte.</description>
+  <row>
+    <panel>
+      <table>
+        <title>Vue globale enrichie du trafic</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval sentbyte_num=coalesce(tonumber(sentbyte),0)
+| eval rcvdbyte_num=coalesce(tonumber(rcvdbyte),0)
+| eval total_bytes=sentbyte_num+rcvdbyte_num
+| stats count as evenements
+        dc(srcip) as sources_uniques
+        dc(dstip) as destinations_uniques
+        dc(dstport) as ports_uniques
+        sum(total_bytes) as volume_total_octets
+| eval volume_total_Go=round(volume_total_octets/1024/1024/1024,2)
+| table evenements sources_uniques destinations_uniques ports_uniques volume_total_Go</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0x006D9C]</option>
+        <title>Évolution du trafic dans le temps</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| timechart span=1h count as evenements</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0x4FA3C7]</option>
+<option name="charting.chart">area</option>
+<option name="charting.chart.stackMode">default</option>
+        <title>Évolution du volume réseau</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| eval sentbyte_num=coalesce(tonumber(sentbyte),0)
+| eval rcvdbyte_num=coalesce(tonumber(rcvdbyte),0)
+| eval total_bytes=sentbyte_num+rcvdbyte_num
+| timechart span=1h sum(total_bytes) as volume_octets
+| eval volume_Go=round(volume_octets/1024/1024/1024,2)
+| fields _time volume_Go</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xF1813F]</option>
+
+        <title>Sources à comportement réseau intense</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval sentbyte_num=coalesce(tonumber(sentbyte),0)
+| eval rcvdbyte_num=coalesce(tonumber(rcvdbyte),0)
+| eval total_bytes=sentbyte_num+rcvdbyte_num
+| stats count as connexions
+        dc(dstip) as destinations_uniques
+        dc(dstport) as ports_uniques
+        sum(total_bytes) as volume_octets
+        by srcip
+| eval score_activite=round(
+        log(connexions+1)*20
+        + destinations_uniques*5
+        + ports_uniques*10,
+        2
+  )
+| sort - score_activite
+| head 10
+| table srcip score_activite</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.fieldColors">{"Trafic autorisé":0x53A051,"Trafic bloqué":0xDC4E41,"Fin de session":0x7B8187,"Autre":0x006D9C}</option>
+        <title>Actions firewall suspectes ou refusées</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval signification=case(
+    action="allowed","Trafic autorisé",
+    action="block","Trafic bloqué",
+    action="teardown","Fin de session",
+    1=1,"Autre"
+)
+| stats count as evenements by signification
+| sort - evenements</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xF1813F]</option>
+        <title>Détection de sources qui contactent beaucoup de destinations</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where isnotnull(srcip) AND isnotnull(dstip)
+| stats count as connexions
+        dc(dstip) as destinations_uniques
+        by srcip
+| where connexions&gt;=10
+| sort - destinations_uniques
+| head 10
+| table srcip destinations_uniques</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="height">250</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xDC4E41]</option>
+        <title>Détection de sources qui contactent beaucoup de ports</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where isnotnull(srcip) AND isnotnull(dstport)
+| stats count as connexions
+        dc(dstport) as ports_uniques
+        by srcip
+| where connexions&gt;=10
+| sort - ports_uniques
+| head 10
+| table srcip ports_uniques</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Ports rares ou inhabituels</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where isnotnull(dstport)
+| stats count as connexions
+        dc(srcip) as sources_uniques
+        dc(dstip) as destinations_uniques
+        values(service) as services
+        by dstport
+| where connexions&gt;=2 AND connexions&lt;=50
+| sort connexions
+| head 15
+| table dstport connexions sources_uniques destinations_uniques services</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+</dashboard>

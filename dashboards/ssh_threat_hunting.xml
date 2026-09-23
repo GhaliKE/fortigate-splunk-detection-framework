@@ -1,0 +1,270 @@
+<dashboard version="1.1" theme="dark">
+  <label>Tableau de Bord Threat Hunting SSH via Fortigate</label>
+  <description>Ce tableau de bord permet d’analyser le trafic SSH observé dans les logs Fortigate live. Il met en évidence les sources SSH actives, les destinations ciblées, les actions du pare-feu, les pics temporels, les connexions non autorisées, les activités hors horaires et les comportements pouvant indiquer une reconnaissance ou un accès distant suspect.</description>
+  <row>
+    <panel>
+      <table>
+        <title>Vue globale SSH</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval total_bytes=coalesce(tonumber(sentbyte),0)+coalesce(tonumber(rcvdbyte),0)
+| stats count as evenements_ssh
+        dc(srcip) as sources_uniques
+        dc(dstip) as destinations_uniques
+        sum(total_bytes) as volume_octets
+| eval volume_Go=round(volume_octets/1024/1024/1024,2)
+| table evenements_ssh sources_uniques destinations_uniques volume_Go</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0x006D9C]</option>
+        <title>Évolution du trafic SSH</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| timechart span=1h count as evenements_ssh</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.fieldColors">{"Autorisé":0x53A051,"Bloqué":0xDC4E41,"Fin de session":0x7B8187,"Autre":0x006D9C}</option>
+        <title>SSH par action firewall dans le temps</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval action_ssh=case(
+    action="allowed","Autorisé",
+    action="block" OR action="blocked","Bloqué",
+    action="teardown","Fin de session",
+    1=1,"Autre"
+)
+| timechart span=1h count by action_ssh</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xF1813F]</option>
+        <title>Sources SSH prioritaires</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)
+| stats count(eval(statut_action="autorise")) as autorisees
+        count(eval(statut_action="non_autorise")) as ssh_bloquees
+        dc(dstip) as destinations_ssh
+        by srcip
+| eval decisions=autorisees+ssh_bloquees
+| where decisions&gt;=20 AND ssh_bloquees&gt;=10
+| eval ratio_non_autorise=round((ssh_bloquees/decisions)*100,2)
+| where ratio_non_autorise&gt;=80
+| eval score_priorite=round(
+    (ratio_non_autorise*0.5)
+    +(min(ssh_bloquees,100)*0.3)
+    +(min(destinations_ssh,20)*1),
+    2
+)
+| sort - score_priorite
+| head 10
+| table srcip score_priorite</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xDC4E41]</option>
+        <title>Connexions SSH non autorisées</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| where action="block" OR action="blocked"
+| stats count as connexions_ssh_bloquees
+        dc(dstip) as destinations_ssh
+        by srcip
+| where connexions_ssh_bloquees&gt;=10
+| sort - connexions_ssh_bloquees
+| head 10
+| table srcip connexions_ssh_bloquees</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.chart">bar</option>
+        <option name="charting.drilldown">all</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xDC4E41]</option>
+        <title>Destinations SSH les plus ciblées</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| where action="block" OR action="blocked"
+| stats count as tentatives_bloquees
+        dc(srcip) as sources_uniques
+        by dstip
+| where tentatives_bloquees&gt;=10
+| sort - tentatives_bloquees
+| head 10
+| table dstip tentatives_bloquees</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xF1813F]</option>
+        <title>Activité SSH bloquée hors horaires</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| where action="block" OR action="blocked"
+| eval heure=tonumber(strftime(_time,"%H"))
+| where heure&lt;8 OR heure&gt;18
+| stats count as connexions_hors_horaires
+        dc(dstip) as destinations_ssh
+        by srcip
+| where connexions_hors_horaires&gt;=10
+| sort - connexions_hors_horaires
+| head 10
+| table srcip connexions_hors_horaires</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <format type="color" field="niveau_risque">
+  <colorPalette type="map">{"Faible":"#53A051","Moyen":"#F8BE34","Élevé":"#F1813F","Critique":"#DC4E41"}</colorPalette>
+</format>
+
+<format type="color" field="score_risque_ssh">
+  <colorPalette type="expression">if(value&gt;=80,"#DC4E41",if(value&gt;=60,"#F1813F",if(value&gt;=30,"#F8BE34","#53A051")))</colorPalette>
+</format>
+
+<format type="color" field="ratio_non_autorise">
+  <colorPalette type="expression">if(value&gt;=95,"#DC4E41",if(value&gt;=90,"#F1813F","#F8BE34"))</colorPalette>
+</format>
+<option name="count">10</option>
+<option name="drilldown">none</option>
+<option name="rowNumbers">true</option>
+<option name="wrap">true</option>
+        <title>Score de risque SSH par IP source</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| where dstport=22 OR lower(coalesce(service,""))="ssh"
+| eval heure=tonumber(strftime(_time,"%H"))
+| eval hors_horaires_flag=if(heure&lt;8 OR heure&gt;18,1,0)
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)
+| stats count(eval(statut_action="autorise")) as autorisees
+        count(eval(statut_action="non_autorise")) as ssh_bloquees
+        sum(hors_horaires_flag) as hors_horaires
+        dc(dstip) as destinations_ssh
+        by srcip
+| eval decisions=autorisees+ssh_bloquees
+| where decisions&gt;=20 AND ssh_bloquees&gt;=10
+| eval ratio_non_autorise=round((ssh_bloquees/decisions)*100,2)
+| where ratio_non_autorise&gt;=80
+| eval score_volume=case(
+    decisions&lt;50,5,
+    decisions&lt;200,10,
+    decisions&lt;1000,15,
+    1=1,20
+)
+| eval score_blocage=case(
+    ssh_bloquees&lt;25,5,
+    ssh_bloquees&lt;50,10,
+    ssh_bloquees&lt;100,15,
+    1=1,20
+)
+| eval score_ratio=case(
+    ratio_non_autorise&lt;85,10,
+    ratio_non_autorise&lt;95,20,
+    1=1,30
+)
+| eval score_destinations=case(
+    destinations_ssh&lt;3,5,
+    destinations_ssh&lt;10,10,
+    destinations_ssh&lt;30,15,
+    1=1,20
+)
+| eval score_horaires=case(
+    hors_horaires=0,0,
+    hors_horaires&lt;10,3,
+    hors_horaires&lt;50,7,
+    1=1,10
+)
+| eval score_risque_ssh=score_volume+score_blocage+score_ratio+score_destinations+score_horaires
+| eval score_risque_ssh=if(score_risque_ssh&gt;100,100,score_risque_ssh)
+| eval niveau_risque=case(
+    score_risque_ssh&lt;30,"Faible",
+    score_risque_ssh&lt;60,"Moyen",
+    score_risque_ssh&lt;80,"Élevé",
+    1=1,"Critique"
+)
+| sort - score_risque_ssh
+| head 20
+| table srcip niveau_risque score_risque_ssh ratio_non_autorise decisions ssh_bloquees destinations_ssh hors_horaires</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+</dashboard>

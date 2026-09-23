@@ -1,0 +1,36 @@
+######################################################################
+# BASELINE COMPORTEMENTALE PAR SOURCE
+# Objectif : comparer chaque source a son comportement observe.
+# Fenetre : 24h | Buckets : 30 minutes
+# Resultat actuel observe : 0 anomalie au seuil operationnel.
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| bin _time span=30m
+| stats count as connexions dc(dstip) as destinations dc(dstport) as ports by _time srcip
+| eventstats count as nb_periodes avg(connexions) as moyenne_connexions stdev(connexions) as ecart_connexions avg(destinations) as moyenne_destinations stdev(destinations) as ecart_destinations by srcip
+| where nb_periodes>=4
+| eval z_connexions=if(ecart_connexions>0,round((connexions-moyenne_connexions)/ecart_connexions,2),0)
+| eval z_destinations=if(ecart_destinations>0,round((destinations-moyenne_destinations)/ecart_destinations,2),0)
+| eval score_anomalie=max(abs(z_connexions),abs(z_destinations))
+| where score_anomalie>=3 AND connexions>=10
+| eval niveau_anomalie=if(score_anomalie>=4,"Critique","Eleve")
+| sort - score_anomalie
+| head 20
+| table _time srcip niveau_anomalie score_anomalie connexions moyenne_connexions z_connexions destinations moyenne_destinations z_destinations ports nb_periodes
+
+
+######################################################################
+# DIAGNOSTIC DE LA BASELINE
+# Utiliser ce bloc si aucune anomalie n'est retournee.
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| bin _time span=30m
+| stats count as connexions dc(dstip) as destinations dc(dstport) as ports by _time srcip
+| eventstats count as nb_periodes avg(connexions) as moyenne_connexions stdev(connexions) as ecart_connexions avg(destinations) as moyenne_destinations stdev(destinations) as ecart_destinations by srcip
+| where nb_periodes>=4
+| eval z_connexions=if(ecart_connexions>0,round((connexions-moyenne_connexions)/ecart_connexions,2),0)
+| eval z_destinations=if(ecart_destinations>0,round((destinations-moyenne_destinations)/ecart_destinations,2),0)
+| eval score_anomalie=max(abs(z_connexions),abs(z_destinations))
+| stats count as lignes max(score_anomalie) as score_anomalie_max avg(score_anomalie) as score_anomalie_moyen dc(srcip) as sources_analysees

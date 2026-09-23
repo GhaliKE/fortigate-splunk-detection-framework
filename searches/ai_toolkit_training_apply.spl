@@ -1,0 +1,113 @@
+######################################################################
+# AI TOOLKIT - ACCES SENSIBLES FORTIGATE
+# Modele : fortigate_sensitive_access_score_model
+# Algorithme : DensityFunction
+# Entrainement final : 7 jours, granularite 1 heure
+# Application dashboard : 4 heures, granularite 1 heure
+# Classification :
+#   allowed        = autorise
+#   block/blocked  = non_autorise
+#   teardown       = fin_session, exclue du ratio
+######################################################################
+
+
+######################################################################
+# 1. ENTRAINEMENT FINAL DU MODELE - EXECUTION PONCTUELLE
+# Ne jamais placer cette recherche dans un dashboard.
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-7d
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)
+| eval heure=tonumber(strftime(_time,"%H"))
+| eval hors_horaires_flag=if(heure<8 OR heure>18,1,0)
+| bin _time span=1h
+| stats count(eval(statut_action="autorise")) as autorisees
+        count(eval(statut_action="non_autorise")) as non_autorisees
+        sum(hors_horaires_flag) as hors_horaires
+        dc(dstip) as destinations
+        dc(dstport_str) as ports
+        dc(service_sensible) as services_sensibles
+        by _time srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>0
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| eval score_connexions=case(decisions<20,5,decisions<100,10,decisions<500,15,1=1,20)
+| eval score_destinations=case(destinations<3,5,destinations<10,10,destinations<30,15,1=1,20)
+| eval score_ports=case(ports<3,3,ports<10,7,ports<30,12,1=1,15)
+| eval score_services=case(services_sensibles=1,5,services_sensibles=2,10,services_sensibles>=3,15,1=1,0)
+| eval score_ratio=case(ratio_non_autorise<50,0,ratio_non_autorise<70,5,ratio_non_autorise<85,10,ratio_non_autorise<95,15,1=1,20)
+| eval score_horaire=case(hors_horaires=0,0,hors_horaires<10,3,hors_horaires<50,7,1=1,10)
+| eval score_risque=score_connexions+score_destinations+score_ports+score_services+score_ratio+score_horaire
+| fit DensityFunction score_risque into fortigate_sensitive_access_score_model
+
+
+######################################################################
+# 2. APPLICATION DU MODELE - PANEL SINGLE VALUE
+# Panel : Anomalies AI Toolkit detectees
+######################################################################
+
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)
+| eval heure=tonumber(strftime(_time,"%H"))
+| eval hors_horaires_flag=if(heure<8 OR heure>18,1,0)
+| bin _time span=1h
+| stats count(eval(statut_action="autorise")) as autorisees
+        count(eval(statut_action="non_autorise")) as non_autorisees
+        sum(hors_horaires_flag) as hors_horaires
+        dc(dstip) as destinations
+        dc(dstport_str) as ports
+        dc(service_sensible) as services_sensibles
+        by _time srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>0
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| eval score_connexions=case(decisions<20,5,decisions<100,10,decisions<500,15,1=1,20)
+| eval score_destinations=case(destinations<3,5,destinations<10,10,destinations<30,15,1=1,20)
+| eval score_ports=case(ports<3,3,ports<10,7,ports<30,12,1=1,15)
+| eval score_services=case(services_sensibles=1,5,services_sensibles=2,10,services_sensibles>=3,15,1=1,0)
+| eval score_ratio=case(ratio_non_autorise<50,0,ratio_non_autorise<70,5,ratio_non_autorise<85,10,ratio_non_autorise<95,15,1=1,20)
+| eval score_horaire=case(hors_horaires=0,0,hors_horaires<10,3,hors_horaires<50,7,1=1,10)
+| eval score_risque=score_connexions+score_destinations+score_ports+score_services+score_ratio+score_horaire
+| apply fortigate_sensitive_access_score_model
+| stats count(eval(IsOutlier=1)) as anomalies_ai
+
+
+######################################################################
+# 3. VERIFICATION DU MODELE
+# Executer chaque commande separement.
+######################################################################
+
+# | listmodels
+# | search name="fortigate_sensitive_access_score_model"
+
+# | summary fortigate_sensitive_access_score_model

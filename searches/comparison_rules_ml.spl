@@ -1,0 +1,99 @@
+######################################################################
+# COMPARAISON REGLES METIER VS ML
+# Resultats observes : regles=80-81, AI=0, baseline=0.
+######################################################################
+
+# Nombre de detections par les regles metier
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| eval statut_action=case(action="allowed","autorise",action="block" OR action="blocked","non_autorise",action="teardown","fin_session",1=1,"autre")
+| stats count(eval(statut_action="autorise")) as autorisees count(eval(statut_action="non_autorise")) as non_autorisees dc(dstip) as destinations dc(dstport_str) as ports by srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>=50 AND non_autorisees>=25
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| where ratio_non_autorise>=80
+| stats count as detections_regles_metier
+
+
+######################################################################
+# VALIDATION SYNTHETIQUE DU MOTEUR DE DETECTION
+# Aucune donnee organisationnelle reelle
+######################################################################
+
+| makeresults count=4
+| streamstats count as scenario_id
+| eval srcip=case(
+    scenario_id=1,"192.0.2.10",
+    scenario_id=2,"198.51.100.20",
+    scenario_id=3,"203.0.113.30",
+    scenario_id=4,"192.0.2.40"
+)
+| eval scenario=case(
+    scenario_id=1,"Trafic normal",
+    scenario_id=2,"Scan SSH massif",
+    scenario_id=3,"Activité suspecte intermédiaire",
+    scenario_id=4,"Teardown massif"
+)
+| eval autorisees=case(
+    scenario_id=1,190,
+    scenario_id=2,5,
+    scenario_id=3,20,
+    scenario_id=4,0
+)
+| eval non_autorisees=case(
+    scenario_id=1,10,
+    scenario_id=2,495,
+    scenario_id=3,80,
+    scenario_id=4,0
+)
+| eval fins_session=case(
+    scenario_id=1,100,
+    scenario_id=2,5,
+    scenario_id=3,20,
+    scenario_id=4,1000
+)
+| eval destinations=case(
+    scenario_id=1,2,
+    scenario_id=2,50,
+    scenario_id=3,8,
+    scenario_id=4,3
+)
+| eval hors_horaires=case(
+    scenario_id=1,0,
+    scenario_id=2,200,
+    scenario_id=3,15,
+    scenario_id=4,0
+)
+| eval decisions=autorisees+non_autorisees
+| eval ratio_non_autorise=if(decisions>0,round((non_autorisees/decisions)*100,2),0)
+| eval score_volume=case(decisions<100,5,decisions<500,10,decisions<1000,15,1=1,20)
+| eval score_blocage=case(non_autorisees<50,5,non_autorisees<100,10,non_autorisees<500,15,1=1,20)
+| eval score_ratio=case(ratio_non_autorise<80,0,ratio_non_autorise<90,10,ratio_non_autorise<95,20,1=1,30)
+| eval score_destinations=case(destinations<3,5,destinations<10,10,destinations<30,15,1=1,20)
+| eval score_horaires=case(hors_horaires=0,0,hors_horaires<10,3,hors_horaires<50,7,1=1,10)
+| eval score_risque=score_volume+score_blocage+score_ratio+score_destinations+score_horaires
+| eval score_risque=if(score_risque>100,100,score_risque)
+| eval retenue=if(decisions>=50 AND non_autorisees>=25 AND ratio_non_autorise>=80,"Oui","Non")
+| eval niveau_risque=case(
+    score_risque<30,"Faible",
+    score_risque<60,"Moyen",
+    score_risque<80,"Élevé",
+    1=1,"Critique"
+)
+| eval resultat_attendu=case(
+    scenario_id=1,"Non retenu",
+    scenario_id=2,"Retenu et risque élevé",
+    scenario_id=3,"Retenu",
+    scenario_id=4,"Non retenu"
+)
+| eval validation=case(
+    scenario_id=1 AND retenue="Non","Réussi",
+    scenario_id=2 AND retenue="Oui" AND score_risque>=60,"Réussi",
+    scenario_id=3 AND retenue="Oui","Réussi",
+    scenario_id=4 AND retenue="Non" AND decisions=0,"Réussi",
+    1=1,"Échec"
+)
+| table scenario srcip autorisees non_autorisees fins_session decisions ratio_non_autorise destinations hors_horaires score_risque niveau_risque retenue resultat_attendu validation

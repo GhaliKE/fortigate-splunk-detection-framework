@@ -1,0 +1,235 @@
+<dashboard version="1.1" theme="dark">
+  <label>Tableau de Bord des Accès Sensibles via Fortigate</label>
+  <description>Ce tableau de bord permet de superviser les accès sensibles observés dans les logs Fortigate live, notamment SSH, RDP, SSL/VPN potentiel et SMB. Il met en évidence les volumes d’activité, les actions du pare-feu, les connexions refusées, les activités hors horaires et les sources présentant un comportement potentiellement suspect.</description>
+  <row>
+    <panel>
+      <table>
+        <title>Vue globale des accès sensibles</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="sslvpn","SSLVPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| eval total_bytes=coalesce(tonumber(sentbyte),0)+coalesce(tonumber(rcvdbyte),0)
+| stats count as evenements
+        dc(srcip) as sources_uniques
+        dc(dstip) as destinations_uniques
+        dc(service_sensible) as services_sensibles
+        sum(total_bytes) as volume_octets
+| eval volume_Go=round(volume_octets/1024/1024/1024,2)
+| table evenements sources_uniques destinations_uniques services_sensibles volume_Go</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.fieldColors">{"SSH":0x006D9C,"RDP":0xF1813F,"SMB":0x8856A7,"SSLVPN":0x53A051,"SSL/VPN":0x53A051,"SSL/VPN potentiel":0x53A051}</option>
+        <title>Répartition par service sensible</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="sslvpn","SSLVPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| stats count as evenements by service_sensible
+| sort - evenements</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <option name="charting.fieldColors">{"SSH":0x006D9C,"RDP":0xF1813F,"SMB":0x8856A7,"SSLVPN":0x53A051,"SSL/VPN":0x53A051,"SSL/VPN potentiel":0x53A051}</option>
+        <title>Évolution des accès sensibles dans le temps</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="sslvpn","SSLVPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| timechart span=1h count by service_sensible</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <option name="charting.seriesColors">[0xDC4E41]</option>
+        <title>Connexions refusées par service sensible</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| where action="block" OR action="blocked"
+| stats count as connexions_bloquees by service_sensible
+| sort - connexions_bloquees</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <single>
+        <option name="colorBy">value</option>
+<option name="colorMode">block</option>
+<option name="rangeColors">["0x53A051","0xF1813F","0xDC4E41"]</option>
+<option name="rangeValues">[1,5]</option>
+<option name="showSparkline">0</option>
+<option name="showTrendIndicator">0</option>
+<option name="useColors">1</option>
+        <title>Anomalies AI Toolkit détectées</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="sslvpn","SSLVPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| eval status=case(action="allowed","autorise",action="block","non_autorise",action="teardown","fin_session",1=1,"autre")
+| eval heure=tonumber(strftime(_time,"%H"))
+| eval hors_horaires_flag=if(heure&lt;8 OR heure&gt;18,1,0)
+| bin _time span=15m
+| stats count(eval(status="autorise")) as autorisees count(eval(status="non_autorise")) as non_autorisees sum(hors_horaires_flag) as hors_horaires dc(dstip) as destinations dc(dstport_str) as ports dc(service_sensible) as services_sensibles by _time srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions&gt;0
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| eval score_connexions=case(decisions&lt;20,5,decisions&lt;100,10,decisions&lt;500,15,1=1,20)
+| eval score_destinations=case(destinations&lt;3,5,destinations&lt;10,10,destinations&lt;30,15,1=1,20)
+| eval score_ports=case(ports&lt;3,3,ports&lt;10,7,ports&lt;30,12,1=1,15)
+| eval score_services=case(services_sensibles=1,5,services_sensibles=2,10,services_sensibles&gt;=3,15,1=1,0)
+| eval score_ratio=case(ratio_non_autorise&lt;50,0,ratio_non_autorise&lt;70,5,ratio_non_autorise&lt;85,10,ratio_non_autorise&lt;95,15,1=1,20)
+| eval score_horaire=case(hors_horaires=0,0,hors_horaires&lt;10,3,hors_horaires&lt;50,7,1=1,10)
+| eval score_risque=score_connexions+score_destinations+score_ports+score_services+score_ratio+score_horaire
+| apply fortigate_sensitive_access_score_model
+| stats count(eval(IsOutlier=1)) as anomalies_ai</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+          <refresh>5m</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="height">247</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="refresh.display">progressbar</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <format type="color" field="categorie_risque">
+  <colorPalette type="map">{"Critique":"#DC4E41","Élevé":"#F1813F","Moyen":"#F8BE34"}</colorPalette>
+</format>
+
+<format type="color" field="ratio_non_autorise">
+  <colorPalette type="expression">if(value&gt;=95,"#DC4E41",if(value&gt;=90,"#F1813F","#F8BE34"))</colorPalette>
+</format>
+
+<format type="color" field="non_autorisees">
+  <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F1813F" minColor="#FFF2CC"></colorPalette>
+  <scale type="minMidMax"></scale>
+</format>
+<option name="count">10</option>
+<option name="drilldown">none</option>
+<option name="rowNumbers">true</option>
+<option name="wrap">true</option>
+        <title>Sources prioritaires après filtrage avancé</title>
+        <search>
+          <query>index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(
+    dstport_str="22" OR service_lower="ssh","SSH",
+    dstport_str="3389" OR service_lower="rdp","RDP",
+    dstport_str="445" OR service_lower="smb","SMB",
+    service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",
+    1=1,"Autre"
+)
+| search service_sensible!="Autre"
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)
+| stats count(eval(statut_action="autorise")) as autorisees
+        count(eval(statut_action="non_autorise")) as non_autorisees
+        count(eval(statut_action="fin_session")) as fins_session
+        dc(dstip) as destinations
+        dc(dstport_str) as ports
+        dc(service_sensible) as services_sensibles
+        values(service_sensible) as services
+        by srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions&gt;=50 AND non_autorisees&gt;=25
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| where ratio_non_autorise&gt;=80
+| eval categorie_risque=case(
+    ratio_non_autorise&gt;=95 AND non_autorisees&gt;=100 AND destinations&gt;=5,"Critique",
+    ratio_non_autorise&gt;=90 AND non_autorisees&gt;=50,"Élevé",
+    1=1,"Moyen"
+)
+| sort - non_autorisees
+| head 50
+| table srcip categorie_risque ratio_non_autorise decisions non_autorisees destinations services</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="categorie_risque">
+          <colorPalette type="map">{"Critique":#D41F1F,"Élevé":#D94E17,"Moyen":#CBA700}</colorPalette>
+        </format>
+        <format type="color" field="ratio_non_autorise">
+          <colorPalette type="list">[#118832,#E3723A,#D41F1F,#D41F1F]</colorPalette>
+          <scale type="threshold">70,90,100</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+</dashboard>

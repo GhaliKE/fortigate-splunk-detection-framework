@@ -1,0 +1,105 @@
+######################################################################
+# FortiGate Detection Pack - Requetes SPL finales
+# Classification normalisee des actions :
+#   allowed        = autorise
+#   block/blocked  = non_autorise
+#   teardown       = fin_session (exclue des ratios de blocage)
+# Rafraichissement recommande : manuel
+######################################################################
+
+######################################################################
+# DASHBOARD 2 - ACCES SENSIBLES VIA FORTIGATE
+# Services : SSH, RDP, SMB, SSL/VPN potentiel
+######################################################################
+
+# PANEL 1 - Vue globale des acces sensibles
+# Fenetre : 4h | Visualisation : Statistics
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| eval total_bytes=coalesce(tonumber(sentbyte),0)+coalesce(tonumber(rcvdbyte),0)
+| stats count as evenements dc(srcip) as sources_uniques dc(dstip) as destinations_uniques dc(service_sensible) as services_sensibles sum(total_bytes) as volume_octets
+| eval volume_Go=round(volume_octets/1024/1024/1024,2)
+| table evenements sources_uniques destinations_uniques services_sensibles volume_Go
+
+
+# PANEL 2 - Repartition par service sensible
+# Fenetre : 4h | Visualisation : Bar Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| stats count as evenements by service_sensible
+| sort - evenements
+
+
+# PANEL 3 - Evolution des acces sensibles
+# Fenetre : 24h | Visualisation : Line Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| timechart span=1h count by service_sensible
+
+
+# PANEL 4 - Connexions bloquees par service sensible
+# Fenetre : 24h | Visualisation : Bar Chart
+index=fortigate sourcetype=fortigate_traffic earliest=-24h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| where action="block" OR action="blocked"
+| stats count as connexions_bloquees by service_sensible
+| sort - connexions_bloquees
+
+
+# PANEL 5 - Sources prioritaires apres filtrage avance
+# Fenetre : 4h | Visualisation : Table | Top 50
+# Seuils : decisions>=50, bloquees>=25, ratio>=80%.
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="ssl" OR service_lower="sslvpn","SSL/VPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| eval statut_action=case(action="allowed","autorise",action="block" OR action="blocked","non_autorise",action="teardown","fin_session",1=1,"autre")
+| stats count(eval(statut_action="autorise")) as autorisees count(eval(statut_action="non_autorise")) as non_autorisees count(eval(statut_action="fin_session")) as fins_session dc(dstip) as destinations dc(dstport_str) as ports dc(service_sensible) as services_sensibles values(service_sensible) as services by srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>=50 AND non_autorisees>=25
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| where ratio_non_autorise>=80
+| eval categorie_risque=case(ratio_non_autorise>=95 AND non_autorisees>=100 AND destinations>=5,"Critique",ratio_non_autorise>=90 AND non_autorisees>=50,"Eleve",1=1,"Moyen")
+| sort - non_autorisees
+| head 50
+| table srcip categorie_risque ratio_non_autorise decisions non_autorisees destinations services
+
+
+# PANEL 6 - Anomalies AI Toolkit detectees
+# Fenetre : 4h | Visualisation : Single Value
+# Prerequis : modele fortigate_sensitive_access_score_model deja entraine.
+index=fortigate sourcetype=fortigate_traffic earliest=-4h
+| eval dstport_str=tostring(dstport)
+| eval service_lower=lower(coalesce(service,""))
+| eval service_sensible=case(dstport_str="22" OR service_lower="ssh","SSH",dstport_str="3389" OR service_lower="rdp","RDP",dstport_str="445" OR service_lower="smb","SMB",service_lower="sslvpn","SSLVPN",1=1,"Autre")
+| search service_sensible!="Autre"
+| eval statut_action=case(action="allowed","autorise",action="block" OR action="blocked","non_autorise",action="teardown","fin_session",1=1,"autre")
+| eval heure=tonumber(strftime(_time,"%H"))
+| eval hors_horaires_flag=if(heure<8 OR heure>18,1,0)
+| bin _time span=15m
+| stats count(eval(statut_action="autorise")) as autorisees count(eval(statut_action="non_autorise")) as non_autorisees sum(hors_horaires_flag) as hors_horaires dc(dstip) as destinations dc(dstport_str) as ports dc(service_sensible) as services_sensibles by _time srcip
+| eval decisions=autorisees+non_autorisees
+| where decisions>0
+| eval ratio_non_autorise=round((non_autorisees/decisions)*100,2)
+| eval score_connexions=case(decisions<20,5,decisions<100,10,decisions<500,15,1=1,20)
+| eval score_destinations=case(destinations<3,5,destinations<10,10,destinations<30,15,1=1,20)
+| eval score_ports=case(ports<3,3,ports<10,7,ports<30,12,1=1,15)
+| eval score_services=case(services_sensibles=1,5,services_sensibles=2,10,services_sensibles>=3,15,1=1,0)
+| eval score_ratio=case(ratio_non_autorise<50,0,ratio_non_autorise<70,5,ratio_non_autorise<85,10,ratio_non_autorise<95,15,1=1,20)
+| eval score_horaire=case(hors_horaires=0,0,hors_horaires<10,3,hors_horaires<50,7,1=1,10)
+| eval score_risque=score_connexions+score_destinations+score_ports+score_services+score_ratio+score_horaire
+| apply fortigate_sensitive_access_score_model
+| stats count(eval(IsOutlier=1)) as anomalies_ai

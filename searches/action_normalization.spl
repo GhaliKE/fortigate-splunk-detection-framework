@@ -1,0 +1,6 @@
+| eval statut_action=case(
+    action="allowed","autorise",
+    action="block" OR action="blocked","non_autorise",
+    action="teardown","fin_session",
+    1=1,"autre"
+)

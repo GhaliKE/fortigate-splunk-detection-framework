@@ -1,0 +1,8 @@
+scenario,srcip,action,connection_count,unique_destinations,off_hours_connections,expected_result,expected_risk
+normal_traffic,192.0.2.10,allowed,190,2,0,not_retained,low
+normal_traffic,192.0.2.10,block,10,2,0,not_retained,low
+high_volume_ssh_scan,198.51.100.20,allowed,5,50,200,retained,high
+high_volume_ssh_scan,198.51.100.20,blocked,495,50,200,retained,high
+intermediate_suspicious_activity,203.0.113.30,allowed,20,8,15,retained,medium
+intermediate_suspicious_activity,203.0.113.30,blocked,80,8,15,retained,medium
+teardown_heavy_traffic,192.0.2.40,teardown,1000,0,0,not_retained,not_blocked_behavior
