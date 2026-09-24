@@ -1,38 +1,46 @@
 # Public release checklist
 
-- [ ] No real organizational logs
-- [ ] No internal IP addresses
-- [ ] No internal hostnames
-- [ ] No customer names
-- [ ] No usernames or email addresses
-- [ ] No internal Splunk URLs
-- [ ] No API keys, passwords, tokens, or secrets
-- [ ] No confidential screenshots
-- [ ] Only RFC 5737 addresses in examples
-- [ ] README results verified
-- [ ] 98.84% described only as investigation-volume reduction
-- [ ] Zero anomaly and zero outlier results preserved
-- [ ] No unsupported accuracy or detection-rate claims
-- [ ] Dashboards reviewed
-- [ ] SPL files reviewed
-- [ ] License reviewed
-- [ ] Final diff reviewed before commit
-- [ ] Git history checked for secrets before push
+This checklist reflects the current public state of the repository. The
+original report, presentation, generated files, and unverified figures are not
+tracked or published.
 
-## Deferred publication items
+- [x] No real organizational logs
+- [x] No internal IP addresses
+- [x] No internal hostnames
+- [x] No customer names
+- [x] No organizational usernames or email addresses
+- [x] No internal Splunk URLs
+- [x] No API keys, passwords, tokens, or secrets
+- [x] No confidential screenshots
+- [x] Only RFC 5737 addresses in examples
+- [x] README results verified
+- [x] 98.84% described only as investigation-volume reduction
+- [x] Zero anomaly and zero outlier results preserved
+- [x] No unsupported accuracy or detection-rate claims
+- [x] Dashboards reviewed
+- [x] SPL files reviewed
+- [x] License reviewed
+- [x] Final diff reviewed before publication
+- [x] Git history checked for secrets before publication
+- [x] Public contributors reviewed; only `GhaliKE` is currently listed
+- [x] No social image published without an anonymized, cleared asset
+
+## Intentionally excluded material
 
 The original academic report, presentation, LaTeX sources, generated outputs,
-and unverified figures are retained in `_local_backup/originals/` and are not
-public release material.
+and unverified figures are retained only in a local, Git-ignored backup. They
+are not public release material.
 
 Expected anonymized images are listed in [`images/README.md`](images/README.md).
 No image is currently published because the available screenshots and
 organizational graphics have not been independently cleared for release.
 
-The following requested artifacts were not present in the source workspace and
-were not fabricated: `searches/synthetic_validation.spl` and
-publication-ready anonymized screenshots. The limitations summary is provided
-in `documentation/limitations.md`.
+The optional `searches/synthetic_validation.spl` file was not present in the
+source workspace and was not fabricated. Synthetic validation coverage is
+provided by [`examples/synthetic_test_data.csv`](examples/synthetic_test_data.csv)
+and [`searches/comparison_rules_ml.spl`](searches/comparison_rules_ml.spl).
+The limitations summary is provided in
+[`documentation/limitations.md`](documentation/limitations.md).
 
 ## Renames
 
