@@ -28,8 +28,8 @@ tracked or published.
 ## Intentionally excluded material
 
 The original academic report, presentation, LaTeX sources, generated outputs,
-and unverified figures are retained only in a local, Git-ignored backup. They
-are not public release material.
+and unverified figures are retained outside the public repository. They are not
+public release material.
 
 Expected anonymized images are listed in [`images/README.md`](images/README.md).
 No image is currently published because the available screenshots and
